@@ -1,0 +1,7 @@
+{
+  "name": "Cosmic Voyager 3D",
+  "description": "An interactive 3D galaxy simulator with an AI-powered astronomical assistant for voice and text exploration.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
