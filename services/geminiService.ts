@@ -2,7 +2,15 @@
 import { GoogleGenAI, LiveServerMessage, Modality, Blob } from '@google/genai';
 import { AI_SYSTEM_INSTRUCTION } from '../constants';
 
-const API_KEY = process.env.API_KEY || '';
+// Safe access to API_KEY to prevent ReferenceError: process is not defined
+const getApiKey = () => {
+  try {
+    // @ts-ignore
+    return (typeof process !== 'undefined' && process.env?.API_KEY) ? process.env.API_KEY : '';
+  } catch (e) {
+    return '';
+  }
+};
 
 export class GeminiService {
   private ai: GoogleGenAI;
@@ -12,7 +20,8 @@ export class GeminiService {
   private sources = new Set<AudioBufferSourceNode>();
 
   constructor() {
-    this.ai = new GoogleGenAI({ apiKey: API_KEY });
+    const apiKey = getApiKey();
+    this.ai = new GoogleGenAI({ apiKey });
   }
 
   async sendTextMessage(prompt: string, selectedItem: string, history: any[] = []) {
