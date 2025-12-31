@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { 
   Telescope, 
   Send, 
@@ -28,31 +28,39 @@ import { GalaxyType, CosmicEvent, Message } from './types';
 import { GALAXY_CONFIGS, GALAXY_INTRODUCTIONS, APP_INTRODUCTION } from './constants';
 import { GeminiService } from './services/geminiService';
 
-const gemini = new GeminiService();
-
 // Helper Component for Markdown & LaTeX Rendering
 const FormattedMessage: React.FC<{ content: string }> = ({ content }) => {
   const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (containerRef.current) {
-      // 1. Process LaTeX before markdown
-      // Matches both $...$ and $$...$$
-      let processedContent = content.replace(/\$\$([\s\S]+?)\$\$/g, (match, formula) => {
-        try {
-          return (window as any).katex.renderToString(formula, { displayMode: true, throwOnError: false });
-        } catch (e) { return match; }
-      });
+      let processedContent = content;
 
-      processedContent = processedContent.replace(/\$([\s\S]+?)\$/g, (match, formula) => {
-        try {
-          return (window as any).katex.renderToString(formula, { displayMode: false, throwOnError: false });
-        } catch (e) { return match; }
-      });
+      // Check if katex is available globally
+      const kt = (window as any).katex;
+
+      if (kt) {
+        // 1. Process LaTeX before markdown
+        processedContent = processedContent.replace(/\$\$([\s\S]+?)\$\$/g, (match, formula) => {
+          try {
+            return kt.renderToString(formula, { displayMode: true, throwOnError: false });
+          } catch (e) { return match; }
+        });
+
+        processedContent = processedContent.replace(/\$([\s\S]+?)\$/g, (match, formula) => {
+          try {
+            return kt.renderToString(formula, { displayMode: false, throwOnError: false });
+          } catch (e) { return match; }
+        });
+      }
 
       // 2. Process Markdown
-      const htmlContent = marked.parse(processedContent);
-      containerRef.current.innerHTML = htmlContent as string;
+      try {
+        const htmlContent = marked.parse(processedContent);
+        containerRef.current.innerHTML = htmlContent as string;
+      } catch (e) {
+        containerRef.current.innerText = content;
+      }
     }
   }, [content]);
 
@@ -60,6 +68,9 @@ const FormattedMessage: React.FC<{ content: string }> = ({ content }) => {
 };
 
 const App: React.FC = () => {
+  // Move Service inside component to handle potential env issues safely
+  const gemini = useMemo(() => new GeminiService(), []);
+  
   const [selectedItem, setSelectedItem] = useState<GalaxyType | CosmicEvent>(GalaxyType.SPIRAL);
   const [messages, setMessages] = useState<Message[]>([
     { role: 'ai', text: 'درود بر شما کاوشگر گرامی! من دستیار کیهانی شما هستم. آماده‌ام تا در سفر میان کهکشان‌ها همراهتان باشم. چه سوالی دارید؟', timestamp: new Date() }
@@ -129,6 +140,7 @@ const App: React.FC = () => {
         buffer = await gemini.generateSpeech(GALAXY_INTRODUCTIONS[type]);
         audioCache.current[type] = buffer;
       } catch (err) {
+        console.error("Audio generation failed:", err);
         setIsGeneratingAudio(false);
         return;
       }
@@ -152,7 +164,7 @@ const App: React.FC = () => {
     source.connect(audioContextRef.current.destination);
     
     source.onended = () => {
-      if (Math.abs(audioState.currentTime - currentBufferRef.current!.duration) < 0.2) {
+      if (currentBufferRef.current && Math.abs(audioState.currentTime - currentBufferRef.current.duration) < 0.2) {
         setAudioState(prev => ({ ...prev, isPlaying: false, progress: 100 }));
         if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
       }
@@ -215,7 +227,7 @@ const App: React.FC = () => {
       const response = await gemini.sendTextMessage(inputText, selectedItem, messages);
       setMessages(prev => [...prev, { role: 'ai', text: response || 'متاسفم، مشکلی پیش آمد.', timestamp: new Date() }]);
     } catch (err) {
-      setMessages(prev => [...prev, { role: 'ai', text: 'خطا در ارتباط با هوش مصنوعی.', timestamp: new Date() }]);
+      setMessages(prev => [...prev, { role: 'ai', text: 'خطا در ارتباط با هوش مصنوعی. لطفاً اتصال خود را چک کنید.', timestamp: new Date() }]);
     } finally {
       setIsTyping(false);
     }
