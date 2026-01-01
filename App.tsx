@@ -2,15 +2,8 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { 
   Telescope, 
-  Send, 
-  Mic, 
-  MicOff, 
-  MessageSquare, 
-  ChevronRight, 
   ChevronLeft,
   Compass,
-  Sparkles,
-  Info,
   Loader2,
   Play,
   Pause,
@@ -20,69 +13,22 @@ import {
   Flame,
   Activity,
   Volume2,
-  RotateCcw
+  RotateCcw,
+  Sparkles
 } from 'lucide-react';
-import { marked } from 'marked';
 import GalaxyScene from './components/GalaxyScene';
-import { GalaxyType, CosmicEvent, Message } from './types';
+import { GalaxyType, CosmicEvent } from './types';
 import { GALAXY_CONFIGS, GALAXY_INTRODUCTIONS, APP_INTRODUCTION } from './constants';
 import { GeminiService } from './services/geminiService';
 
-// Helper Component for Markdown & LaTeX Rendering
-const FormattedMessage: React.FC<{ content: string }> = ({ content }) => {
-  const containerRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (containerRef.current) {
-      let processedContent = content;
-
-      // Check if katex is available globally
-      const kt = (window as any).katex;
-
-      if (kt) {
-        // 1. Process LaTeX before markdown
-        processedContent = processedContent.replace(/\$\$([\s\S]+?)\$\$/g, (match, formula) => {
-          try {
-            return kt.renderToString(formula, { displayMode: true, throwOnError: false });
-          } catch (e) { return match; }
-        });
-
-        processedContent = processedContent.replace(/\$([\s\S]+?)\$/g, (match, formula) => {
-          try {
-            return kt.renderToString(formula, { displayMode: false, throwOnError: false });
-          } catch (e) { return match; }
-        });
-      }
-
-      // 2. Process Markdown
-      try {
-        const htmlContent = marked.parse(processedContent);
-        containerRef.current.innerHTML = htmlContent as string;
-      } catch (e) {
-        containerRef.current.innerText = content;
-      }
-    }
-  }, [content]);
-
-  return <div ref={containerRef} className="prose-content text-[11px] leading-relaxed" />;
-};
-
 const App: React.FC = () => {
-  // Move Service inside component to handle potential env issues safely
   const gemini = useMemo(() => new GeminiService(), []);
   
   const [selectedItem, setSelectedItem] = useState<GalaxyType | CosmicEvent>(GalaxyType.SPIRAL);
-  const [messages, setMessages] = useState<Message[]>([
-    { role: 'ai', text: 'درود بر شما کاوشگر گرامی! من دستیار کیهانی شما هستم. آماده‌ام تا در سفر میان کهکشان‌ها همراهتان باشم. چه سوالی دارید؟', timestamp: new Date() }
-  ]);
-  const [inputText, setInputText] = useState('');
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
-  const [isLiveActive, setIsLiveActive] = useState(false);
-  const [isTyping, setIsTyping] = useState(false);
   const [isGeneratingAudio, setIsGeneratingAudio] = useState(false);
   const [showWelcome, setShowWelcome] = useState(true);
   
-  // Audio Player State
   const [audioState, setAudioState] = useState<{
     isPlaying: boolean;
     progress: number;
@@ -98,18 +44,11 @@ const App: React.FC = () => {
   const animationFrameRef = useRef<number | null>(null);
   const currentBufferRef = useRef<AudioBuffer | null>(null);
 
-  const chatEndRef = useRef<HTMLDivElement>(null);
-
+  // Stop current audio when switching items, but DON'T start a new one automatically
   useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, isTyping]);
-
-  useEffect(() => {
-    if (!showWelcome) {
-      handleLoadAudio(selectedItem);
-    }
-    return () => stopAudio();
-  }, [selectedItem, showWelcome]);
+    stopAudio();
+    currentBufferRef.current = null; // Clear current buffer so we know it needs regeneration or reload from cache
+  }, [selectedItem]);
 
   const stopAudio = () => {
     if (sourceNodeRef.current) {
@@ -121,12 +60,10 @@ const App: React.FC = () => {
     }
     pausedAtRef.current = 0;
     startedAtRef.current = 0;
-    setAudioState(prev => ({ ...prev, isPlaying: false, progress: 0, currentTime: 0 }));
+    setAudioState(prev => ({ ...prev, isPlaying: false, progress: 0, currentTime: 0, duration: 0 }));
   };
 
   const handleLoadAudio = async (type: string) => {
-    stopAudio();
-    
     if (!audioContextRef.current) {
       audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
     }
@@ -194,6 +131,20 @@ const App: React.FC = () => {
   };
 
   const togglePlayPause = () => {
+    // If we haven't loaded/generated audio for this item yet, generate it now
+    if (!currentBufferRef.current && !audioCache.current[selectedItem]) {
+      handleLoadAudio(selectedItem);
+      return;
+    }
+
+    // If it's in cache but not in currentBufferRef (due to switch), set it and play
+    if (!currentBufferRef.current && audioCache.current[selectedItem]) {
+      currentBufferRef.current = audioCache.current[selectedItem];
+      setAudioState(prev => ({ ...prev, duration: currentBufferRef.current!.duration }));
+      playAudio(0);
+      return;
+    }
+
     if (audioState.isPlaying) {
       if (sourceNodeRef.current) {
         try { sourceNodeRef.current.stop(); } catch(e) {}
@@ -212,46 +163,6 @@ const App: React.FC = () => {
     const mins = Math.floor(seconds / 60);
     const secs = Math.floor(seconds % 60);
     return `${mins}:${secs.toString().padStart(2, '0')}`;
-  };
-
-  const handleSendMessage = async (e?: React.FormEvent) => {
-    e?.preventDefault();
-    if (!inputText.trim()) return;
-
-    const userMessage: Message = { role: 'user', text: inputText, timestamp: new Date() };
-    setMessages(prev => [...prev, userMessage]);
-    setInputText('');
-    setIsTyping(true);
-
-    try {
-      const response = await gemini.sendTextMessage(inputText, selectedItem, messages);
-      setMessages(prev => [...prev, { role: 'ai', text: response || 'متاسفم، مشکلی پیش آمد.', timestamp: new Date() }]);
-    } catch (err) {
-      setMessages(prev => [...prev, { role: 'ai', text: 'خطا در ارتباط با هوش مصنوعی. لطفاً اتصال خود را چک کنید.', timestamp: new Date() }]);
-    } finally {
-      setIsTyping(false);
-    }
-  };
-
-  const toggleLiveVoice = async () => {
-    if (isLiveActive) { window.location.reload(); return; }
-    try {
-      setIsLiveActive(true);
-      await gemini.connectVoice(selectedItem, {
-        onMessage: (text, isUser) => {
-          setMessages(prev => {
-            const last = prev[prev.length - 1];
-            if (last && last.role === (isUser ? 'user' : 'ai') && Date.now() - last.timestamp.getTime() < 3000) {
-              const updated = [...prev];
-              updated[updated.length - 1] = { ...last, text: last.text + ' ' + text };
-              return updated;
-            }
-            return [...prev, { role: isUser ? 'user' : 'ai', text, timestamp: new Date() }];
-          });
-        },
-        onError: () => setIsLiveActive(false)
-      });
-    } catch (err) { setIsLiveActive(false); }
   };
 
   return (
@@ -275,7 +186,7 @@ const App: React.FC = () => {
                 onClick={() => setShowWelcome(false)}
                 className="w-full py-5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white rounded-2xl font-bold text-lg shadow-xl transition-all active:scale-95 flex items-center justify-center gap-3"
               >
-                آغاز سفر در زمان و فضا
+                آغاز سفر در پهنه هستی
                 <ChevronLeft className="w-6 h-6" />
               </button>
             </div>
@@ -285,29 +196,29 @@ const App: React.FC = () => {
 
       <div className={`absolute inset-0 z-10 pointer-events-none flex flex-row-reverse transition-opacity duration-1000 ${showWelcome ? 'opacity-0' : 'opacity-100'}`}>
         
-        <aside className={`pointer-events-auto h-full bg-slate-900/40 backdrop-blur-xl border-l border-white/10 transition-all duration-500 flex flex-col ${isSidebarOpen ? 'w-80' : 'w-0 overflow-hidden'}`}>
-          <div className="p-6 border-b border-white/10">
-            <h1 className="text-xl font-bold flex items-center gap-3 text-blue-400">
-              <Telescope className="w-6 h-6" />
-              کاوشگر کیهانی
+        <aside className={`pointer-events-auto h-full bg-slate-950/60 backdrop-blur-2xl border-l border-white/10 transition-all duration-500 flex flex-col ${isSidebarOpen ? 'w-96' : 'w-0 overflow-hidden'}`}>
+          <div className="p-8 border-b border-white/10">
+            <h1 className="text-2xl font-black flex items-center gap-4 text-blue-400 uppercase tracking-tighter">
+              <Telescope className="w-8 h-8" />
+              Cosmic Explorer
             </h1>
           </div>
           
-          <div className="flex-1 overflow-y-auto p-4 space-y-6">
+          <div className="flex-1 overflow-y-auto p-6 space-y-8">
             <section>
-              <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-3 px-2">انواع کهکشان‌ها</p>
-              <div className="space-y-2">
+              <p className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] mb-4 px-2">انواع کهکشان‌ها</p>
+              <div className="grid grid-cols-1 gap-2">
                 {Object.values(GalaxyType).map((type) => (
                   <button
                     key={type}
                     onClick={() => setSelectedItem(type)}
-                    className={`w-full p-3 rounded-xl text-right transition-all flex items-center justify-between group ${selectedItem === type ? 'bg-blue-600/30 border border-blue-500/50' : 'bg-white/5 border border-transparent hover:bg-white/10'}`}
+                    className={`w-full p-4 rounded-2xl text-right transition-all flex items-center justify-between group ${selectedItem === type ? 'bg-blue-600/40 border border-blue-500/50 shadow-[0_0_20px_rgba(37,99,235,0.2)]' : 'bg-white/5 border border-transparent hover:bg-white/10'}`}
                   >
-                    <div className="flex items-center gap-3">
-                      <div className={`p-2 rounded-lg ${selectedItem === type ? 'bg-blue-500 shadow-lg' : 'bg-slate-700'}`}>
-                        <Compass className="w-4 h-4 text-white" />
+                    <div className="flex items-center gap-4">
+                      <div className={`p-2.5 rounded-xl ${selectedItem === type ? 'bg-blue-500 shadow-lg' : 'bg-slate-800'}`}>
+                        <Compass className="w-5 h-5 text-white" />
                       </div>
-                      <span className="text-sm font-semibold">{type}</span>
+                      <span className="text-sm font-bold">{type}</span>
                     </div>
                   </button>
                 ))}
@@ -315,130 +226,102 @@ const App: React.FC = () => {
             </section>
 
             <section>
-              <p className="text-[10px] font-black text-purple-400 uppercase tracking-widest mb-3 px-2">رویدادهای عظیم کیهانی</p>
-              <div className="space-y-2">
+              <p className="text-[10px] font-black text-purple-400 uppercase tracking-[0.2em] mb-4 px-2">رویدادهای عظیم</p>
+              <div className="grid grid-cols-1 gap-2">
                 {Object.values(CosmicEvent).map((event) => (
                   <button
                     key={event}
                     onClick={() => setSelectedItem(event)}
-                    className={`w-full p-3 rounded-xl text-right transition-all flex items-center justify-between group ${selectedItem === event ? 'bg-purple-600/30 border border-purple-500/50 shadow-lg' : 'bg-white/5 border border-transparent hover:bg-white/10'}`}
+                    className={`w-full p-4 rounded-2xl text-right transition-all flex items-center justify-between group ${selectedItem === event ? 'bg-purple-600/40 border border-purple-500/50 shadow-[0_0_20px_rgba(147,51,234,0.2)]' : 'bg-white/5 border border-transparent hover:bg-white/10'}`}
                   >
-                    <div className="flex items-center gap-3">
-                      <div className={`p-2 rounded-lg ${selectedItem === event ? 'bg-purple-500 shadow-lg shadow-purple-500/20' : 'bg-slate-700'}`}>
-                        {event === CosmicEvent.COLLISION ? <Activity size={16}/> : event === CosmicEvent.SUPERNOVA ? <Flame size={16}/> : <Zap size={16}/>}
+                    <div className="flex items-center gap-4">
+                      <div className={`p-2.5 rounded-xl ${selectedItem === event ? 'bg-purple-500 shadow-lg shadow-purple-500/20' : 'bg-slate-800'}`}>
+                        {event === CosmicEvent.COLLISION ? <Activity size={20}/> : event === CosmicEvent.SUPERNOVA ? <Flame size={20}/> : <Zap size={20}/>}
                       </div>
-                      <span className="text-sm font-semibold">{event}</span>
+                      <span className="text-sm font-bold">{event}</span>
                     </div>
                   </button>
                 ))}
               </div>
             </section>
 
-            {/* Audio Player UI */}
-            <div className="p-5 bg-blue-500/10 border border-blue-500/20 rounded-3xl relative overflow-hidden shadow-xl group">
-              <div className="flex items-center justify-between mb-4">
-                <div className="flex items-center gap-2 text-blue-300 font-bold text-[10px] uppercase tracking-tighter">
-                  <Volume2 size={14} className={audioState.isPlaying ? 'animate-pulse' : ''} /> شناسنامه صوتی پدیده
+            <div className="p-6 bg-gradient-to-br from-blue-600/20 to-purple-600/20 border border-white/10 rounded-[2rem] relative overflow-hidden shadow-2xl">
+              <div className="flex items-center justify-between mb-6">
+                <div className="flex items-center gap-3 text-blue-300 font-black text-xs uppercase tracking-widest">
+                  <Volume2 size={16} className={audioState.isPlaying ? 'animate-pulse' : ''} /> 
+                  روایتگر هوشمند
                 </div>
                 {audioState.duration > 0 && (
-                   <span className="text-[9px] font-mono text-blue-400 bg-blue-400/10 px-2 py-0.5 rounded-full">
+                   <span className="text-[10px] font-mono text-blue-300 bg-blue-400/20 px-3 py-1 rounded-full border border-blue-400/20">
                      {formatTime(audioState.currentTime)} / {formatTime(audioState.duration)}
                    </span>
                 )}
               </div>
               
-              <p className="text-[11px] leading-relaxed text-slate-300 mb-6 text-justify">
+              <p className="text-sm leading-relaxed text-slate-300 mb-8 text-justify font-light italic">
                 {GALAXY_INTRODUCTIONS[selectedItem]}
               </p>
 
-              <div className="relative h-1.5 w-full bg-slate-800 rounded-full mb-6 overflow-hidden">
+              <div className="relative h-2 w-full bg-slate-900 rounded-full mb-8 overflow-hidden border border-white/5">
                 <div 
-                  className="absolute top-0 right-0 h-full bg-gradient-to-l from-blue-400 to-purple-500 shadow-[0_0_10px_rgba(59,130,246,0.5)] transition-all duration-100 ease-linear"
+                  className="absolute top-0 right-0 h-full bg-gradient-to-l from-blue-400 via-indigo-500 to-purple-600 shadow-[0_0_15px_rgba(59,130,246,0.6)] transition-all duration-100 ease-linear"
                   style={{ width: `${audioState.progress}%` }}
                 />
               </div>
 
-              <div className="flex items-center justify-center gap-4">
+              <div className="flex items-center justify-center gap-6">
                 <button 
                   onClick={stopAudio}
-                  className="p-3 bg-slate-800 hover:bg-slate-700 rounded-2xl border border-white/5 transition-all active:scale-90"
+                  className="p-4 bg-slate-900/80 hover:bg-slate-800 rounded-2xl border border-white/10 transition-all active:scale-90"
                   title="توقف"
                 >
-                  <Square size={16} className="fill-current text-slate-400" />
+                  <Square size={18} className="fill-current text-slate-400" />
                 </button>
                 
                 <button 
                   onClick={togglePlayPause}
                   disabled={isGeneratingAudio}
-                  className={`p-5 rounded-2xl shadow-xl transition-all active:scale-95 flex items-center justify-center ${
+                  className={`p-6 rounded-[1.5rem] shadow-2xl transition-all active:scale-95 flex items-center justify-center ${
                     audioState.isPlaying 
                     ? 'bg-purple-600 hover:bg-purple-500' 
                     : 'bg-blue-600 hover:bg-blue-500'
                   }`}
+                  title={audioState.isPlaying ? "توقف موقت" : "پخش روایت صوتی"}
                 >
                   {audioState.isPlaying ? (
-                    <Pause size={24} className="fill-current text-white" />
+                    <Pause size={28} className="fill-current text-white" />
                   ) : (
-                    <Play size={24} className="fill-current text-white translate-x-0.5" />
+                    <Play size={28} className="fill-current text-white translate-x-1" />
                   )}
                 </button>
 
                 <button 
                   onClick={() => handleLoadAudio(selectedItem)}
-                  className="p-3 bg-slate-800 hover:bg-slate-700 rounded-2xl border border-white/5 transition-all active:scale-90"
-                  title="پخش مجدد"
+                  disabled={isGeneratingAudio}
+                  className="p-4 bg-slate-900/80 hover:bg-slate-800 rounded-2xl border border-white/10 transition-all active:scale-90"
+                  title="تولید مجدد صوت"
                 >
-                  <RotateCcw size={16} className="text-slate-400" />
+                  <RotateCcw size={18} className="text-slate-400" />
                 </button>
               </div>
 
               {isGeneratingAudio && (
-                <div className="absolute inset-0 bg-slate-900/90 backdrop-blur-md flex flex-col items-center justify-center gap-3 z-20">
-                  <Loader2 className="w-8 h-8 text-blue-400 animate-spin" />
-                  <span className="text-[10px] font-bold text-blue-300 tracking-widest uppercase">دریافت سیگنال‌های کیهانی...</span>
+                <div className="absolute inset-0 bg-slate-950/95 backdrop-blur-xl flex flex-col items-center justify-center gap-4 z-20">
+                  <div className="relative">
+                    <Loader2 className="w-12 h-12 text-blue-500 animate-spin" />
+                    <Sparkles className="absolute -top-1 -right-1 w-4 h-4 text-purple-400 animate-pulse" />
+                  </div>
+                  <span className="text-[10px] font-black text-blue-400 tracking-[0.3em] uppercase">در حال تولید روایت صوتی...</span>
                 </div>
               )}
             </div>
           </div>
         </aside>
 
-        <main className="flex-1 flex flex-col p-6 justify-end items-start relative">
-          <div className="absolute top-10 right-10 text-right">
-            <h2 className="text-5xl font-black text-white/90 uppercase tracking-tighter drop-shadow-2xl">{selectedItem}</h2>
-            <div className="mt-2 h-1.5 w-24 bg-gradient-to-l from-blue-500 to-transparent rounded-full shadow-lg shadow-blue-500/50" />
-          </div>
-
-          <div className="pointer-events-auto w-full max-w-lg bg-slate-950/70 backdrop-blur-3xl border border-white/10 rounded-[2.5rem] overflow-hidden shadow-2xl flex flex-col h-[500px]">
-            <div className="p-4 bg-white/5 border-b border-white/10 flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-blue-600 to-indigo-600 flex items-center justify-center shadow-lg"><MessageSquare size={20} /></div>
-                <div><h3 className="font-bold text-sm text-slate-200">دستیار کیهانی</h3><p className="text-[9px] text-green-400 font-bold uppercase tracking-widest">Live Syncing</p></div>
-              </div>
-              <button onClick={toggleLiveVoice} className={`p-3 rounded-2xl transition-all ${isLiveActive ? 'bg-red-500 animate-pulse' : 'bg-blue-600 hover:bg-blue-500 shadow-lg shadow-blue-600/20'}`}>
-                {isLiveActive ? <MicOff size={18} /> : <Mic size={18} />}
-              </button>
-            </div>
-
-            <div className="flex-1 overflow-y-auto p-5 space-y-4">
-              {messages.map((msg, i) => (
-                <div key={i} className={`flex ${msg.role === 'user' ? 'justify-start' : 'justify-end'}`}>
-                  <div className={`max-w-[85%] p-4 rounded-3xl shadow-sm ${msg.role === 'user' ? 'bg-white/10 rounded-tr-none border border-white/5' : 'bg-blue-600 rounded-tl-none shadow-lg shadow-blue-600/10'}`}>
-                    {msg.role === 'ai' ? (
-                      <FormattedMessage content={msg.text} />
-                    ) : (
-                      <div className="text-[11px] leading-relaxed">{msg.text}</div>
-                    )}
-                  </div>
-                </div>
-              ))}
-              {isTyping && <div className="flex justify-end"><div className="bg-blue-600/30 px-4 py-3 rounded-3xl flex gap-1"><div className="w-1.5 h-1.5 bg-white rounded-full animate-bounce"/><div className="w-1.5 h-1.5 bg-white rounded-full animate-bounce [animation-delay:0.2s]"/><div className="w-1.5 h-1.5 bg-white rounded-full animate-bounce [animation-delay:0.4s]"/></div></div>}
-              <div ref={chatEndRef} />
-            </div>
-
-            <form onSubmit={handleSendMessage} className="p-4 bg-slate-900/80 border-t border-white/10 flex gap-2">
-              <input type="text" value={inputText} onChange={e => setInputText(e.target.value)} placeholder="سوال خود را اینجا بنویسید..." className="flex-1 bg-white/5 border border-white/10 rounded-2xl px-5 py-3.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500/40 transition-all" />
-              <button type="submit" className="bg-blue-600 p-3.5 rounded-2xl hover:bg-blue-700 transition-all shadow-lg active:scale-95"><Send size={22} className="rotate-180" /></button>
-            </form>
+        <main className="flex-1 flex flex-col p-12 justify-start items-start relative">
+          <div className="text-right">
+            <h2 className="text-7xl font-black text-white/95 uppercase tracking-tighter drop-shadow-[0_10px_30px_rgba(0,0,0,0.5)] leading-none mb-4">{selectedItem}</h2>
+            <div className="h-2 w-48 bg-gradient-to-l from-blue-500 via-indigo-500 to-transparent rounded-full shadow-[0_0_20px_rgba(59,130,246,0.5)]" />
           </div>
         </main>
       </div>
