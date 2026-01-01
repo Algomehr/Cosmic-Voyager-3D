@@ -72,20 +72,32 @@ const GalaxyScene: React.FC<GalaxySceneProps> = ({ params }) => {
 
         if (currentParams.type === CosmicEvent.SUPERNOVA) {
           const velocities = (geometry as any).userData.velocities;
+          const duration = 10; // 10 seconds loop
+          const progress = (elapsedTime % duration) / duration;
+          
+          // Reset at start of loop
+          if (progress < 0.01) {
+            for (let i = 0; i < positions.length; i++) positions[i] = 0;
+          }
+
           for (let i = 0; i < positions.length / 3; i++) {
             const i3 = i * 3;
-            positions[i3] += velocities[i3] * 0.04;
-            positions[i3+1] += velocities[i3+1] * 0.04;
-            positions[i3+2] += velocities[i3+2] * 0.04;
-            const dist = Math.sqrt(positions[i3]**2 + positions[i3+1]**2 + positions[i3+2]**2);
-            const heat = Math.max(0, 1 - dist / 20);
+            // Expand based on velocity and loop progress
+            const speedFactor = progress * 15;
+            positions[i3] = velocities[i3] * speedFactor;
+            positions[i3+1] = velocities[i3+1] * speedFactor;
+            positions[i3+2] = velocities[i3+2] * speedFactor;
+
+            // Fade out as it expands
+            const alpha = Math.max(0, 1 - progress * 1.2);
+            const heat = Math.max(0, 1 - progress * 1.5);
             colors[i3] = 1.0; 
-            colors[i3+1] = Math.pow(heat, 1.2); 
-            colors[i3+2] = Math.pow(heat, 3.0); 
-            if (dist > 30) { positions[i3] = 0; positions[i3+1] = 0; positions[i3+2] = 0; }
+            colors[i3+1] = heat; 
+            colors[i3+2] = Math.pow(heat, 2); 
           }
           geometry.attributes.position.needsUpdate = true;
           geometry.attributes.color.needsUpdate = true;
+          (sceneRef.current.stars.material as THREE.PointsMaterial).opacity = Math.max(0, 1 - progress * 1.1);
 
         } else if (currentParams.type === CosmicEvent.QUASAR) {
           for (let i = 0; i < positions.length / 3; i++) {
@@ -93,42 +105,44 @@ const GalaxyScene: React.FC<GalaxySceneProps> = ({ params }) => {
             const x = positions[i3];
             const z = positions[i3+2];
             const r = Math.sqrt(x*x + z*z);
-            const angle = 0.04 * (4 / (r + 0.3)); // Faster inner rotation
+            const angle = 0.04 * (4 / (r + 0.3));
             positions[i3] = x * Math.cos(angle) - z * Math.sin(angle);
             positions[i3+2] = x * Math.sin(angle) + z * Math.cos(angle);
-            positions[i3+1] = Math.sin(elapsedTime * 4 + r * 2) * 0.01; // Turbulent disk
+            positions[i3+1] = Math.sin(elapsedTime * 4 + r * 2) * 0.01;
           }
           geometry.attributes.position.needsUpdate = true;
 
         } else if (currentParams.type === CosmicEvent.COLLISION) {
           const velocities = (geometry as any).userData.velocities;
-          const centers = (geometry as any).userData.centers; // Two centers orbiting each other
+          const initialPositions = (geometry as any).userData.initialPositions;
+          const isA = (geometry as any).userData.isGalaxyA;
           
-          const time = elapsedTime * 0.2;
-          const centerA = new THREE.Vector3(-4 * Math.cos(time), 0, -4 * Math.sin(time));
-          const centerB = new THREE.Vector3(4 * Math.cos(time), 1 * Math.sin(time*0.5), 4 * Math.sin(time));
+          // Oscillate distance between centers: 8 to -8 and back
+          const cycleTime = elapsedTime * 0.4;
+          const dist = 8 * Math.cos(cycleTime);
+          
+          const centerA = new THREE.Vector3(dist, 0, 0);
+          const centerB = new THREE.Vector3(-dist, 0, 0);
 
           for (let i = 0; i < positions.length / 3; i++) {
             const i3 = i * 3;
-            const isA = (geometry as any).userData.isGalaxyA[i];
-            const targetCenter = isA ? centerA : centerB;
+            const targetCenter = isA[i] ? centerA : centerB;
             
-            // Particles orbit their local center while drifting
-            const x = positions[i3] - targetCenter.x;
-            const z = positions[i3+2] - targetCenter.z;
-            const angle = 0.02;
-            const nx = x * Math.cos(angle) - z * Math.sin(angle);
-            const nz = x * Math.sin(angle) + z * Math.cos(angle);
+            // Particles rotate around their own center
+            const rx = initialPositions[i3];
+            const rz = initialPositions[i3+2];
+            const angle = elapsedTime * 0.5; // Internal rotation
             
-            positions[i3] = nx + targetCenter.x + velocities[i3] * 0.01;
-            positions[i3+1] += (isA ? 0.002 : -0.002) + velocities[i3+1] * 0.01;
-            positions[i3+2] = nz + targetCenter.z + velocities[i3+2] * 0.01;
+            const rotX = rx * Math.cos(angle) - rz * Math.sin(angle);
+            const rotZ = rx * Math.sin(angle) + rz * Math.cos(angle);
+            
+            // Gravity pull when close
+            const pull = Math.max(0, 1 - Math.abs(dist) / 5) * 2;
+            const driftX = (isA[i] ? -pull : pull);
 
-            // Simple "tidal tail" stretch toward the other center
-            const distToOther = positions[i3] - (isA ? centerB.x : centerA.x);
-            if (Math.abs(distToOther) < 3) {
-                positions[i3] += (isA ? 0.05 : -0.05);
-            }
+            positions[i3] = rotX + targetCenter.x + driftX;
+            positions[i3+1] = initialPositions[i3+1] + Math.sin(elapsedTime + rx) * 0.2;
+            positions[i3+2] = rotZ + targetCenter.z;
           }
           geometry.attributes.position.needsUpdate = true;
 
@@ -140,17 +154,23 @@ const GalaxyScene: React.FC<GalaxySceneProps> = ({ params }) => {
 
       sceneRef.current?.additionalParticles.forEach((obj) => {
         if (obj.name === 'quasar_jet') {
-          const positions = (obj as THREE.Points).geometry.attributes.position.array as Float32Array;
-          for (let i = 0; i < positions.length; i += 3) {
-            positions[i+1] += 0.35; // relativistic speed
-            if (positions[i+1] > 18) {
-                positions[i+1] = 0.4;
-                positions[i] = (Math.random() - 0.5) * 0.04;
-                positions[i+2] = (Math.random() - 0.5) * 0.04;
+          const pts = (obj as THREE.Points).geometry.attributes.position.array as Float32Array;
+          for (let i = 0; i < pts.length; i += 3) {
+            pts[i+1] += 0.4;
+            if (pts[i+1] > 20) {
+                pts[i+1] = 0.5;
+                pts[i] = (Math.random() - 0.5) * 0.05;
+                pts[i+2] = (Math.random() - 0.5) * 0.05;
             }
           }
           (obj as THREE.Points).geometry.attributes.position.needsUpdate = true;
-        } else if (obj.name === 'supernova_core' || obj.name === 'quasar_core_glow') {
+        } else if (obj.name === 'supernova_core') {
+          const duration = 10;
+          const progress = (elapsedTime % duration) / duration;
+          const s = (1 - progress) * 15 * (1 + Math.sin(elapsedTime * 20) * 0.2);
+          obj.scale.set(s, s, s);
+          (obj as THREE.Points).material.opacity = Math.max(0, 1 - progress * 1.5);
+        } else if (obj.name === 'quasar_core_glow') {
           const s = 1 + Math.sin(elapsedTime * 12) * 0.25;
           obj.scale.set(s, s, s);
         }
@@ -193,7 +213,7 @@ const GalaxyScene: React.FC<GalaxySceneProps> = ({ params }) => {
     const colorOutside = new THREE.Color(params.outsideColor);
 
     if (params.type === CosmicEvent.SUPERNOVA) {
-      const count = 120000;
+      const count = 150000;
       const pos = new Float32Array(count * 3);
       const cols = new Float32Array(count * 3);
       const vels = new Float32Array(count * 3);
@@ -201,7 +221,7 @@ const GalaxyScene: React.FC<GalaxySceneProps> = ({ params }) => {
         const i3 = i * 3;
         const theta = Math.random() * Math.PI * 2;
         const phi = Math.acos((Math.random() * 2) - 1);
-        const speed = 0.5 + Math.pow(Math.random(), 3) * 6.0;
+        const speed = 0.2 + Math.pow(Math.random(), 2) * 4.0;
         vels[i3] = Math.sin(phi) * Math.cos(theta) * speed;
         vels[i3+1] = Math.sin(phi) * Math.sin(theta) * speed;
         vels[i3+2] = Math.cos(phi) * speed;
@@ -211,11 +231,11 @@ const GalaxyScene: React.FC<GalaxySceneProps> = ({ params }) => {
       geom.setAttribute('position', new THREE.BufferAttribute(pos, 3));
       geom.setAttribute('color', new THREE.BufferAttribute(cols, 3));
       (geom as any).userData = { velocities: vels };
-      const stars = new THREE.Points(geom, new THREE.PointsMaterial({ size: 0.18, vertexColors: true, map: starTexture, blending: THREE.AdditiveBlending, transparent: true, opacity: 0.8, depthWrite: false }));
+      const stars = new THREE.Points(geom, new THREE.PointsMaterial({ size: 0.15, vertexColors: true, map: starTexture, blending: THREE.AdditiveBlending, transparent: true, opacity: 0.8, depthWrite: false }));
       scene.add(stars);
       sceneRef.current.stars = stars;
 
-      const core = new THREE.Points(new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(new Float32Array([0,0,0]), 3)), new THREE.PointsMaterial({ size: 10, color: 0xffffff, map: starTexture, transparent: true, blending: THREE.AdditiveBlending }));
+      const core = new THREE.Points(new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(new Float32Array([0,0,0]), 3)), new THREE.PointsMaterial({ size: 2, color: 0xffffff, map: starTexture, transparent: true, blending: THREE.AdditiveBlending }));
       core.name = 'supernova_core';
       scene.add(core);
       sceneRef.current.additionalParticles.push(core);
@@ -226,18 +246,18 @@ const GalaxyScene: React.FC<GalaxySceneProps> = ({ params }) => {
       const cols = new Float32Array(count * 3);
       for (let i = 0; i < count; i++) {
         const i3 = i * 3;
-        const r = 0.5 + Math.pow(Math.random(), 1.2) * 7.0;
+        const r = 0.5 + Math.pow(Math.random(), 1.2) * 8.0;
         const a = Math.random() * Math.PI * 2;
         pos[i3] = Math.cos(a) * r;
         pos[i3+1] = (Math.random() - 0.5) * 0.15 * (1/r);
         pos[i3+2] = Math.sin(a) * r;
-        const mix = colorInside.clone().lerp(colorOutside, r/7);
+        const mix = colorInside.clone().lerp(colorOutside, r/8);
         cols[i3] = mix.r; cols[i3+1] = mix.g; cols[i3+2] = mix.b;
       }
       const geom = new THREE.BufferGeometry();
       geom.setAttribute('position', new THREE.BufferAttribute(pos, 3));
       geom.setAttribute('color', new THREE.BufferAttribute(cols, 3));
-      const disk = new THREE.Points(geom, new THREE.PointsMaterial({ size: 0.07, vertexColors: true, map: starTexture, blending: THREE.AdditiveBlending, transparent: true, opacity: 0.75, depthWrite: false }));
+      const disk = new THREE.Points(geom, new THREE.PointsMaterial({ size: 0.07, vertexColors: true, map: starTexture, blending: THREE.AdditiveBlending, transparent: true, opacity: 0.8, depthWrite: false }));
       scene.add(disk);
       sceneRef.current.stars = disk;
 
@@ -250,52 +270,45 @@ const GalaxyScene: React.FC<GalaxySceneProps> = ({ params }) => {
       scene.add(glow);
       sceneRef.current.additionalParticles.push(glow);
 
-      const jetCount = 12000;
-      const jPos = new Float32Array(jetCount * 3);
-      for(let i=0; i<jetCount; i++) {
-        jPos[i*3] = (Math.random() - 0.5) * 0.05; jPos[i*3+1] = Math.random() * 18; jPos[i*3+2] = (Math.random() - 0.5) * 0.05;
+      const jPos = new Float32Array(10000 * 3);
+      for(let i=0; i<10000; i++) {
+        jPos[i*3] = (Math.random() - 0.5) * 0.05; jPos[i*3+1] = Math.random() * 20; jPos[i*3+2] = (Math.random() - 0.5) * 0.05;
       }
-      const jetT = new THREE.Points(new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(jPos, 3)), new THREE.PointsMaterial({ color: 0x00f2ff, size: 0.12, map: starTexture, blending: THREE.AdditiveBlending, transparent: true, opacity: 0.35 }));
+      const jetT = new THREE.Points(new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(jPos, 3)), new THREE.PointsMaterial({ color: 0x00f2ff, size: 0.15, map: starTexture, blending: THREE.AdditiveBlending, transparent: true, opacity: 0.4 }));
       jetT.name = 'quasar_jet';
       const jetB = jetT.clone(); jetB.rotation.x = Math.PI;
       scene.add(jetT, jetB);
       sceneRef.current.additionalParticles.push(jetT, jetB);
 
     } else if (params.type === CosmicEvent.COLLISION) {
-      const count = 160000;
+      const count = 150000;
       const pos = new Float32Array(count * 3);
       const cols = new Float32Array(count * 3);
-      const vels = new Float32Array(count * 3);
-      const isGalaxyA = new Uint8Array(count);
+      const initialPos = new Float32Array(count * 3);
+      const isA = new Uint8Array(count);
       
-      const coreA = new THREE.Vector3(-4, 0, 0);
-      const coreB = new THREE.Vector3(4, 0, 0);
-
       for (let i = 0; i < count; i++) {
         const i3 = i * 3;
-        const isA = i < count * 0.5;
-        isGalaxyA[i] = isA ? 1 : 0;
-        const center = isA ? coreA : coreB;
+        const isGalaxyA = i < count * 0.5;
+        isA[i] = isGalaxyA ? 1 : 0;
+        
         const r = Math.pow(Math.random(), 1.5) * params.radius;
         const a = Math.random() * Math.PI * 2;
         
-        pos[i3] = center.x + Math.cos(a) * r;
-        pos[i3+1] = center.y + (Math.random() - 0.5) * 0.8;
-        pos[i3+2] = center.z + Math.sin(a) * r;
-
-        vels[i3] = (Math.random() - 0.5) * 0.2;
-        vels[i3+1] = (Math.random() - 0.5) * 0.2;
-        vels[i3+2] = (Math.random() - 0.5) * 0.2;
+        // Relative to local center
+        initialPos[i3] = Math.cos(a) * r;
+        initialPos[i3+1] = (Math.random() - 0.5) * 0.5;
+        initialPos[i3+2] = Math.sin(a) * r;
 
         const mix = colorInside.clone().lerp(colorOutside, r / params.radius);
-        if (!isA) mix.offsetHSL(0.5, 0, 0); // Different color for second galaxy
+        if (!isGalaxyA) mix.offsetHSL(0.5, 0, 0); 
         cols[i3] = mix.r; cols[i3+1] = mix.g; cols[i3+2] = mix.b;
       }
       const geom = new THREE.BufferGeometry();
       geom.setAttribute('position', new THREE.BufferAttribute(pos, 3));
       geom.setAttribute('color', new THREE.BufferAttribute(cols, 3));
-      (geom as any).userData = { velocities: vels, isGalaxyA };
-      const stars = new THREE.Points(geom, new THREE.PointsMaterial({ size: 0.06, vertexColors: true, map: starTexture, blending: THREE.AdditiveBlending, transparent: true, opacity: 0.8, depthWrite: false }));
+      (geom as any).userData = { initialPositions: initialPos, isGalaxyA: isA };
+      const stars = new THREE.Points(geom, new THREE.PointsMaterial({ size: 0.07, vertexColors: true, map: starTexture, blending: THREE.AdditiveBlending, transparent: true, opacity: 0.8, depthWrite: false }));
       scene.add(stars);
       sceneRef.current.stars = stars;
 

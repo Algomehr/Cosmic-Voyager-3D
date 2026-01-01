@@ -17,41 +17,41 @@ export const GALAXY_CONFIGS: Record<string, GalaxyParams> = {
     spin: 1,
     randomness: 0.2,
     randomnessPower: 3,
-    insideColor: '#ff6030',
-    outsideColor: '#1b3984'
+    insideColor: '#fff4e6', // زرد-سفید (ستارگان پیرتر در هسته)
+    outsideColor: '#a5f3fc'  // آبی یخی (ستارگان جوان در بازوها)
   },
   [GalaxyType.BARRED_SPIRAL]: {
     type: GalaxyType.BARRED_SPIRAL,
-    starsCount: 90000,
+    starsCount: 100000,
     radius: 6,
     branches: 2,
-    spin: 1.5,
-    randomness: 0.3,
-    randomnessPower: 4,
-    insideColor: '#ffde30',
-    outsideColor: '#5a1b84'
+    spin: 1.2,
+    randomness: 0.25,
+    randomnessPower: 3,
+    insideColor: '#fef3c7', // کهربایی روشن
+    outsideColor: '#7dd3fc'  // آبی آسمانی درخشان
   },
   [GalaxyType.ELLIPTICAL]: {
     type: GalaxyType.ELLIPTICAL,
     starsCount: 180000,
     radius: 4,
     branches: 1,
-    spin: 0.1,
+    spin: 0,
     randomness: 0.8,
     randomnessPower: 2,
-    insideColor: '#fcf6bd',
-    outsideColor: '#ffb38a'
+    insideColor: '#fdba74', // نارنجی مات (ستارگان پیر K-type)
+    outsideColor: '#451a03'  // قهوه‌ای سوخته (غبار کیهانی)
   },
   [GalaxyType.IRREGULAR]: {
     type: GalaxyType.IRREGULAR,
-    starsCount: 70000,
+    starsCount: 80000,
     radius: 5,
     branches: 1,
-    spin: 0.1,
-    randomness: 1.5,
+    spin: 0.2,
+    randomness: 1.2,
     randomnessPower: 1,
-    insideColor: '#a9def9',
-    outsideColor: '#e4c1f9'
+    insideColor: '#bae6fd', // آبی ملایم
+    outsideColor: '#ec4899'  // صورتی (نشان‌دهنده نواحی H-II و گازهای ملتهب)
   },
   [GalaxyType.LENTICULAR]: {
     type: GalaxyType.LENTICULAR,
@@ -61,8 +61,8 @@ export const GALAXY_CONFIGS: Record<string, GalaxyParams> = {
     spin: 0.3,
     randomness: 0.2,
     randomnessPower: 4,
-    insideColor: '#ffefba', // هسته درخشان کرم-سفید
-    outsideColor: '#cd853f'  // دیسک نارنجی سوخته (ستارگان پیر)
+    insideColor: '#fde68a', // زرد درخشان
+    outsideColor: '#1e293b'  // خاکستری متالیک
   },
   [CosmicEvent.COLLISION]: {
     type: CosmicEvent.COLLISION,
@@ -72,32 +72,32 @@ export const GALAXY_CONFIGS: Record<string, GalaxyParams> = {
     spin: 1,
     randomness: 0.3,
     randomnessPower: 2,
-    insideColor: '#4cc9f0',
-    outsideColor: '#f72585',
+    insideColor: '#ffffff',
+    outsideColor: '#3b82f6',
     isEvent: true
   },
   [CosmicEvent.SUPERNOVA]: {
     type: CosmicEvent.SUPERNOVA,
-    starsCount: 80000,
+    starsCount: 150000,
     radius: 5,
     branches: 3,
     spin: 1,
     randomness: 0.2,
     randomnessPower: 3,
     insideColor: '#ffffff',
-    outsideColor: '#ff0000',
+    outsideColor: '#ea580c', // نارنجی تند (فلزات سنگین سنتز شده)
     isEvent: true
   },
   [CosmicEvent.QUASAR]: {
     type: CosmicEvent.QUASAR,
-    starsCount: 100000,
+    starsCount: 220000,
     radius: 5,
     branches: 2,
     spin: 0.5,
     randomness: 0.1,
     randomnessPower: 4,
-    insideColor: '#00f2ff',
-    outsideColor: '#0033ff',
+    insideColor: '#e0f2fe', // سفید-آبی فوق درخشان
+    outsideColor: '#3b0764', // بنفش تیره (انرژی بالا)
     isEvent: true
   }
 };
